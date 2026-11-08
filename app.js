@@ -336,6 +336,23 @@ if (!placeholder) {
   loginBtn.classList.add('hidden');
   const gisBtn = $('#gisBtn');
   let tokenClient = null;
+  let gisLoading = null;
+  // Скрипт Google (gsi/client) грузится только когда он нужен: при наведении, касании или клике.
+  // Так при открытии страницы Google не ставит свои cookie.
+  function loadGis() {
+    if (window.google?.accounts?.oauth2) return Promise.resolve();
+    if (!gisLoading) {
+      gisLoading = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://accounts.google.com/gsi/client';
+        s.async = true;
+        s.onload = () => resolve();
+        s.onerror = () => { gisLoading = null; s.remove(); reject(new Error('gsi')); };
+        document.head.appendChild(s);
+      });
+    }
+    return gisLoading;
+  }
   // Своя кнопка, окно Google открывается по клику (всплывающее, без редиректа).
   function initGis() {
     tokenClient = window.google.accounts.oauth2.initTokenClient({
@@ -354,17 +371,22 @@ if (!placeholder) {
       error_callback: () => { loginError.textContent = 'Окно входа Google закрыто, попробуйте ещё раз.'; },
     });
   }
+  const warmGis = () => {
+    if (tokenClient || gisLoading) return;
+    loadGis().then(initGis).catch(() => {});
+  };
+  gisBtn.addEventListener('pointerenter', warmGis, { once: true });
+  gisBtn.addEventListener('touchstart', warmGis, { once: true, passive: true });
+  gisBtn.addEventListener('focus', warmGis, { once: true });
   gisBtn.addEventListener('click', (e) => {
     e.preventDefault();
     loginError.textContent = '';
-    if (!tokenClient) { loginError.textContent = 'Вход через Google ещё загружается, подождите секунду.'; return; }
-    tokenClient.requestAccessToken();
+    // Если скрипт уже есть, окно открывается сразу, в том же жесте пользователя.
+    if (tokenClient) { tokenClient.requestAccessToken(); return; }
+    loadGis()
+      .then(() => { if (!tokenClient) initGis(); tokenClient.requestAccessToken(); })
+      .catch(() => { loginError.textContent = 'Не загрузился вход через Google. Проверьте сеть и попробуйте ещё раз.'; });
   });
-  (function waitGis(n) {
-    if (window.google?.accounts?.oauth2) initGis();
-    else if (n < 400) setTimeout(() => waitGis(n + 1), 25);
-    else loginError.textContent = 'Не загрузился вход через Google.';
-  })(0);
   const yandexBtn = $('#yandexBtn');
   yandexBtn.addEventListener('click', (e) => {
     e.preventDefault();

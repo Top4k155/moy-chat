@@ -159,6 +159,7 @@ async function save() {
   $('#saveBtn').disabled = true;
   try {
     const emails = [...new Set(draft)].map(normalize);
+    if (!emails.length) throw new Error('Список не может быть пустым: добавьте хотя бы одну почту.');
     const owner = emails.includes(state.owner) ? state.owner : emails[0];
     await set(ref(db, 'access'), {
       owner,

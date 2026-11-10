@@ -3,7 +3,6 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRe
 import { getDatabase, ref, push, query, limitToLast, onChildAdded, serverTimestamp, remove, set, onValue, onChildRemoved, get } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js';
 import { firebaseConfig, ownerEmail } from './firebase-config.js';
 import { YANDEX_CLIENT_ID, API_BASE, VAPID_KEY } from './config.js';
-import { getMessaging, getToken } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-messaging.js';
 
 const $ = (s) => document.querySelector(s);
 const login = $('#login');
@@ -632,11 +631,33 @@ $('#unpin').onclick = async () => {
 $('#logout').onclick = () => auth && signOut(auth);
 
 // ---------- уведомления о новых сообщениях ----------
+// Web Push по стандарту: подписка через PushManager, доставку ведёт push-сервис браузера
+// (Mozilla для Firefox, Google для Chrome, Apple для Safari). Firebase здесь не нужен.
 const pushBtn = $('#pushBtn');
-if ('serviceWorker' in navigator && 'Notification' in window && 'PushManager' in window && VAPID_KEY) {
+const pushSupported = 'serviceWorker' in navigator && 'Notification' in window && 'PushManager' in window && Boolean(VAPID_KEY);
+if (pushSupported) {
   pushBtn.classList.remove('hidden');
+  // Регистрируем сервис-воркер сразу, чтобы показать, подписано ли устройство уже.
+  navigator.serviceWorker.register('sw.js').then(async (reg) => {
+    const sub = await reg.pushManager.getSubscription();
+    setPushOn(Boolean(sub) && Notification.permission === 'granted');
+  }).catch(() => {});
 }
-// Токен сохраняется под uid в pushTokens; сервер шлёт push только тем, у кого есть токен и почта допущена.
+function setPushOn(on) {
+  pushBtn.classList.toggle('on', on);
+  pushBtn.querySelector('.lbl').textContent = on ? 'Уведомления включены' : 'Уведомления';
+}
+// VAPID-ключ приходит строкой base64url, для подписки нужны байты.
+function vapidBytes(s) {
+  const b64 = (s + '='.repeat((4 - (s.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/');
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
+// Ключ записи в базе: в Realtime Database нельзя «.», «#», «$», «[», «]», «/», поэтому берём хеш адреса подписки.
+async function subKey(endpoint) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+// Подписка сохраняется под uid в pushTokens; сервер шлёт push только тем, у кого есть подписка и почта допущена.
 pushBtn.onclick = async () => {
   if (!user || !fbApp) return;
   chatError.textContent = '';
@@ -644,17 +665,31 @@ pushBtn.onclick = async () => {
   try {
     const perm = await Notification.requestPermission();
     if (perm !== 'granted') throw new Error('уведомления запрещены в настройках браузера.');
-    const reg = await navigator.serviceWorker.register('firebase-messaging-sw.js');
-    const token = await getToken(getMessaging(fbApp), { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
-    if (!token) throw new Error('не удалось получить токен устройства.');
-    await set(ref(db, 'pushTokens/' + user.uid + '/' + token), { token, email: user.email || '', updatedAt: Date.now() });
-    pushBtn.classList.add('on');
-    pushBtn.querySelector('.lbl').textContent = 'Уведомления включены';
-    return;
+    const reg = await navigator.serviceWorker.register('sw.js');
+    const want = vapidBytes(VAPID_KEY);
+    let sub = await reg.pushManager.getSubscription();
+    // Если подписка сделана с другим ключом, её нужно пересоздать.
+    if (sub) {
+      const have = sub.options && sub.options.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
+      if (!have || have.length !== want.length || have.some((b, i) => b !== want[i])) {
+        await sub.unsubscribe();
+        sub = null;
+      }
+    }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want });
+    const json = sub.toJSON();
+    await set(ref(db, 'pushTokens/' + user.uid + '/' + await subKey(json.endpoint)), {
+      endpoint: json.endpoint,
+      keys: json.keys,
+      email: user.email || '',
+      updatedAt: Date.now(),
+    });
+    setPushOn(true);
   } catch (err) {
     chatError.textContent = 'Уведомления: ' + (err.message || err);
+  } finally {
+    pushBtn.disabled = false;
   }
-  pushBtn.disabled = false;
 };
 // Сервер сам рассылает push остальным участникам. Чат не ждём: сбой уведомления не должен мешать сообщению.
 async function notifyOthers(text, name) {

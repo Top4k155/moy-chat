@@ -1,0 +1,16 @@
+{
+  "specVersion": "1.0",
+  "entries": [
+    {
+      "identifier": "urn:air:all823218.web.app:chat",
+      "displayName": "Мой чат",
+      "type": "text/markdown; profile=\"urn:air:agent-skills\"",
+      "url": "https://all823218.web.app/llms.txt",
+      "representativeQueries": [
+        "что это за чат",
+        "как войти в закрытый чат",
+        "открытый код чата"
+      ]
+    }
+  ]
+}

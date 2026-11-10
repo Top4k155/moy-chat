@@ -1,0 +1,8 @@
+# Зависимости функции Яндекс Облака (Python 3.12).
+# Версии закреплены: они проверены вместе с рассылкой Web Push.
+firebase-admin==7.7.0
+requests==2.32.5
+pywebpush==2.5.0
+py-vapid==1.9.6
+http_ece==1.2.1
+cryptography==50.0.2

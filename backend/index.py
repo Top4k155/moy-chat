@@ -26,16 +26,15 @@ from firebase_admin import messaging
 from firebase_admin import credentials, db as fb_db
 
 YANDEX_INFO = "https://login.yandex.ru/info?format=json"
-ALLOWED_ORIGIN = "https://top4k155.github.io"
-JSON_HEADERS = {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff",
-    "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Vary": "Origin",
+# Сайты, которым разрешено обращаться к API из браузера.
+ALLOWED_ORIGINS = {
+    "https://top4k155.github.io",
+    "https://all823218.web.app",
+    "https://all823218.firebaseapp.com",
+    "http://localhost:5500",
+    "http://127.0.0.1:5500",
 }
+_request_origin = ""  # заполняется в handler на каждый запрос
 
 _app = None
 
@@ -49,7 +48,18 @@ def _init_firebase():
 
 
 def _reply(status, body):
-    return {"statusCode": status, "headers": JSON_HEADERS, "body": json.dumps(body, ensure_ascii=False)}
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Vary": "Origin",
+    }
+    # Заголовок отдаём только тому сайту, который пришёл в запросе и есть в списке.
+    if _request_origin in ALLOWED_ORIGINS:
+        headers["Access-Control-Allow-Origin"] = _request_origin
+    return {"statusCode": status, "headers": headers, "body": json.dumps(body, ensure_ascii=False)}
 
 
 def _allowed_emails():
@@ -75,7 +85,11 @@ def _yandex_profile(token):
     data = r.json()
     if not data.get("id") or not data.get("default_email"):
         return None
+    avatar = ""
+    if data.get("default_avatar_id") and not data.get("is_avatar_empty"):
+        avatar = "https://avatars.yandex.net/get-yapic/" + str(data["default_avatar_id"]) + "/islands-200"
     return {
+        "avatar": avatar,
         "id": str(data["id"]),
         "email": str(data["default_email"]).lower(),
         "name": str(data.get("real_name") or data.get("display_name") or data.get("login") or "Участник")[:120],
@@ -104,15 +118,21 @@ def _login_yandex(body):
         rec = fb_auth.get_user_by_email(profile["email"])
         uid = rec.uid
         # Обновляем имя, только если оно изменилось.
+        changes = {}
         if (rec.display_name or "") != profile["name"]:
-            fb_auth.update_user(uid, display_name=profile["name"])
+            changes["display_name"] = profile["name"]
+        # Фото ставим, только если у аккаунта его ещё нет (не затираем фото от Google).
+        if profile["avatar"] and not rec.photo_url:
+            changes["photo_url"] = profile["avatar"]
+        if changes:
+            fb_auth.update_user(uid, **changes)
     except fb_auth.UserNotFoundError:
         uid = "ya-" + profile["id"]
         try:
             fb_auth.get_user(uid)
-            fb_auth.update_user(uid, email=profile["email"], email_verified=True, display_name=profile["name"])
+            fb_auth.update_user(uid, email=profile["email"], email_verified=True, display_name=profile["name"], photo_url=profile["avatar"] or None)
         except fb_auth.UserNotFoundError:
-            fb_auth.create_user(uid=uid, email=profile["email"], email_verified=True, display_name=profile["name"])
+            fb_auth.create_user(uid=uid, email=profile["email"], email_verified=True, display_name=profile["name"], photo_url=profile["avatar"] or None)
     custom = fb_auth.create_custom_token(uid, claims)
     if isinstance(custom, bytes):
         custom = custom.decode()
@@ -358,6 +378,9 @@ ROUTES = {
 
 
 def handler(event, context):
+    global _request_origin
+    hdrs = event.get("headers") or {}
+    _request_origin = str(next((v for k, v in hdrs.items() if str(k).lower() == "origin"), "") or "")
     method = (event.get("httpMethod") or "").upper()
     path = (event.get("path") or "").rstrip("/")
     if method == "OPTIONS":

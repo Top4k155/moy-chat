@@ -246,7 +246,7 @@ function buildRules() {
         $uid: {
           '.write': `${allowed} && auth.uid == $uid`,
           $token: {
-            '.validate': "newData.hasChildren(['token','email','updatedAt']) && newData.child('token').isString() && newData.child('token').val().length <= 400",
+            '.validate': "newData.hasChildren(['endpoint','keys','email','updatedAt']) && newData.child('endpoint').isString() && newData.child('endpoint').val().length <= 600 && newData.child('keys/p256dh').isString() && newData.child('keys/auth').isString()",
           },
         },
       },

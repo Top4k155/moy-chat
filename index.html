@@ -83,6 +83,7 @@ button:disabled{opacity:.5;cursor:default}
   text-decoration:none;white-space:nowrap;transition:background .15s,border-color .15s;
 }
 .btn:hover{border-color:var(--muted)}
+.ya-ico{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#fc3f1d;color:#fff;font-size:14px;font-weight:700;line-height:1;margin-right:4px;flex:0 0 auto}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .btn.primary:hover{filter:brightness(1.06)}
 
@@ -299,7 +300,7 @@ html[data-theme="dark"] .login{box-shadow:none}
   <p class="muted">Войдите через Google или Яндекс, чтобы читать и отправлять сообщения.</p>
   <button id="loginBtn" class="btn primary" type="button">Продолжить с Google</button>
   <button id="gisBtn" class="btn primary" type="button">Продолжить с Google</button>
-  <button id="yandexBtn" class="btn" type="button">Войти через Яндекс</button>
+  <button id="yandexBtn" class="btn" type="button"><span class="ya-ico" aria-hidden="true">Я</span>Войти через Яндекс</button>
   <div id="loginError" class="error" role="alert"></div>
   <p class="note">Доступ есть только у адресов, добавленных в правила базы.</p>
 </div>

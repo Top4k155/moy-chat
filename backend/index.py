@@ -4,6 +4,8 @@
 Секреты берутся из переменных окружения функции, в коде их нет:
   FIREBASE_SA_JSON  - JSON ключа сервисного аккаунта Firebase
   FIREBASE_DB_URL   - https://<проект>-default-rtdb.firebaseio.com
+  VAPID_PRIVATE_KEY - приватный ключ VAPID в PEM (секрет, только в переменных функции)
+  VAPID_SUBJECT     - mailto:адрес владельца для push-сервисов
   OWNER_EMAIL       - почта владельца (на случай, если в базе ещё нет access/owner)
   S3_BUCKET, S3_KEY_ID, S3_SECRET - бакет и ключи Object Storage
 """
@@ -22,8 +24,9 @@ import uuid
 import firebase_admin
 import requests
 from firebase_admin import auth as fb_auth
-from firebase_admin import messaging
 from firebase_admin import credentials, db as fb_db
+from py_vapid import Vapid
+from pywebpush import WebPushException, webpush
 
 YANDEX_INFO = "https://login.yandex.ru/info?format=json"
 # Сайты, которым разрешено обращаться к API из браузера.
@@ -326,18 +329,34 @@ def _file_url(body):
     return _reply(200, {"url": _presign("GET", key, {"response-content-disposition": disposition})})
 
 
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "mailto:admin@example.com")
+
+
+def _vapid():
+    """Приватный VAPID-ключ из переменной окружения VAPID_PRIVATE_KEY (PEM). В коде его нет."""
+    raw = os.environ.get("VAPID_PRIVATE_KEY", "").replace("\\n", "\n").strip()
+    if not raw:
+        return None
+    if raw.startswith("-----BEGIN"):
+        return Vapid.from_pem(raw.encode())
+    return Vapid.from_string(private_key=raw)
+
+
 def _notify(body):
-    """Push-уведомление о новом сообщении всем участникам, кроме отправителя."""
+    """Web Push о новом сообщении всем участникам, кроме отправителя (стандарт, push-сервисы браузеров)."""
     uid = _verify_user(str(body.get("idToken") or ""))
     if not uid:
         return _reply(401, {"error": "Нужен вход в чат."})
     if _limited(uid, "notify"):
         return _reply(429, {"error": "Слишком часто, подождите минуту."})
+    vapid = _vapid()
+    if vapid is None:
+        return _reply(500, {"error": "Уведомления не настроены на сервере."})
     text = str(body.get("text") or "")[:140]
     name = str(body.get("name") or "Участник")[:60]
     allowed = _allowed_emails()
     tree = fb_db.reference("pushTokens").get() or {}
-    targets = []  # (владелец, ключ записи, токен)
+    targets = []  # (владелец, ключ записи, подписка)
     seen = set()
     for owner_uid, entries in tree.items():
         if owner_uid == uid or not isinstance(entries, dict):
@@ -345,25 +364,33 @@ def _notify(body):
         for key, info in entries.items():
             if not isinstance(info, dict):
                 continue
-            token = str(info.get("token") or "")
+            endpoint = str(info.get("endpoint") or "")
+            keys = info.get("keys") if isinstance(info.get("keys"), dict) else {}
+            p256dh = str(keys.get("p256dh") or "")
+            auth = str(keys.get("auth") or "")
             email = str(info.get("email") or "").lower()
-            if not token or token in seen or email not in allowed:
+            if not endpoint or not p256dh or not auth or endpoint in seen or email not in allowed:
                 continue
-            seen.add(token)
-            targets.append((owner_uid, key, token))
+            seen.add(endpoint)
+            sub = {"endpoint": endpoint, "keys": {"p256dh": p256dh, "auth": auth}}
+            targets.append((owner_uid, key, sub))
+    payload = json.dumps({"title": name, "body": text, "url": "./"}, ensure_ascii=False)
     sent = 0
-    for start in range(0, len(targets), 500):
-        chunk = targets[start:start + 500]
-        msg = messaging.MulticastMessage(
-            tokens=[t for _, _, t in chunk],
-            data={"title": name, "body": text, "url": "./"},
-            webpush=messaging.WebpushConfig(headers={"TTL": "3600"}),
-        )
-        resp = messaging.send_each_for_multicast(msg)
-        sent += resp.success_count
-        # Удаляем мёртвые токены, чтобы не слать на них снова.
-        for (owner_uid, key, _), r in zip(chunk, resp.responses):
-            if not r.success and isinstance(r.exception, (messaging.UnregisteredError, messaging.InvalidArgumentError)):
+    for owner_uid, key, sub in targets:
+        try:
+            webpush(
+                subscription_info=sub,
+                data=payload,
+                vapid_private_key=vapid,
+                vapid_claims={"sub": VAPID_SUBJECT},
+                ttl=3600,
+                timeout=10,
+            )
+            sent += 1
+        except WebPushException as e:
+            # 404 и 410: подписка больше не действует, удаляем её, чтобы не слать снова.
+            status = getattr(e.response, "status_code", None)
+            if status in (404, 410):
                 fb_db.reference("pushTokens/" + owner_uid + "/" + key).delete()
     return _reply(200, {"sent": sent})
 

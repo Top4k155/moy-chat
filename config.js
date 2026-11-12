@@ -6,4 +6,4 @@ export const API_BASE = 'https://d5du1fva82lh827rqls4.764nr5vy.apigw.yandexcloud
 // Публичный VAPID-ключ для Web Push (стандарт, push-сервисы Mozilla, Google, Apple).
 // Приватная часть лежит только в переменной VAPID_PRIVATE_KEY функции Яндекс Облака, сюда её не класть.
 // Пока пусто, кнопка уведомлений просто не показывается.
-export const VAPID_KEY = 'BBkqrxKtRCAAA-6zK9k_BYXy37U63hqun4yhQg2Umeh52i0lgNmo4D3pixQkHPimJvpz1581PWjHf0cDm6UNEJk';
+export const VAPID_KEY = 'BGZUUY4_on0RLbqd3n0yumCRf6K5kLHZHesGKM9iZ4Svsq9L37O9gIc8Is-TJWDjJ22L91vt_LLeXePlcbewBlU';

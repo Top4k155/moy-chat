@@ -1,0 +1,41 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "access": {
+      ".read": "auth != null && auth.token.email_verified == true && auth.token.email == root.child('access/owner').val()",
+      ".write": "auth != null && auth.token.email_verified == true && auth.token.email == root.child('access/owner').val()"
+    },
+    "accessLog": {
+      ".read": "auth != null && auth.token.email_verified == true && auth.token.email == root.child('access/owner').val()",
+      "$id": {
+        ".write": "auth != null && auth.token.email_verified == true && auth.token.email == root.child('access/owner').val() && newData.child('by').val() == auth.token.email && newData.child('at').isNumber() && newData.hasChildren(['action','text','by','at'])"
+      }
+    },
+    "pushTokens": {
+      ".read": false,
+      "$uid": {
+        ".write": "auth != null && auth.token.email_verified == true && (auth.token.email == root.child('access/owner').val() || (root.child('access/emails').exists() == true && root.child('access/emails').val().contains(',' + auth.token.email + ','))) && auth.uid == $uid",
+        "$token": {
+          ".validate": "newData.hasChildren(['endpoint','keys','email','updatedAt']) && newData.child('endpoint').isString() && newData.child('endpoint').val().length <= 600 && newData.child('keys/p256dh').isString() && newData.child('keys/auth').isString()"
+        }
+      }
+    },
+    "tasks": {
+      ".read": "auth != null && auth.token.email_verified == true && (auth.token.email == root.child('access/owner').val() || (root.child('access/emails').exists() == true && root.child('access/emails').val().contains(',' + auth.token.email + ',')))",
+      "$id": {
+        ".write": "auth != null && auth.token.email_verified == true && (auth.token.email == root.child('access/owner').val() || (root.child('access/emails').exists() == true && root.child('access/emails').val().contains(',' + auth.token.email + ','))) && ((newData.exists() && !data.exists() && newData.child('uid').val() == auth.uid && newData.child('email').val() == auth.token.email && newData.child('title').isString() && newData.child('title').val().length > 0 && newData.child('title').val().length <= 2000 && newData.child('name').isString() && newData.child('name').val().length <= 120 && newData.hasChildren(['uid','name','email','title','priority','status','createdAt']) && (!newData.child('file').exists() || (newData.child('file').hasChildren(['key','name','size','type']) && newData.child('file').child('key').isString() && newData.child('file').child('key').val().length <= 200 && newData.child('file').child('name').isString() && newData.child('file').child('name').val().length <= 200 && newData.child('file').child('size').isNumber()))) || (newData.exists() && data.exists() && newData.child('uid').val() == data.child('uid').val() && newData.child('email').val() == data.child('email').val() && newData.child('createdAt').val() == data.child('createdAt').val() && newData.child('title').isString() && newData.child('title').val().length > 0 && newData.child('title').val().length <= 2000) || (data.exists() && !newData.exists() && (data.child('uid').val() == auth.uid || auth.token.email == root.child('access/owner').val())))",
+        "priority": {
+          ".validate": "newData.val() == 'low' || newData.val() == 'medium' || newData.val() == 'high'"
+        },
+        "status": {
+          ".validate": "newData.val() == 'todo' || newData.val() == 'doing' || newData.val() == 'done'"
+        }
+      }
+    },
+    "pinnedTask": {
+      ".read": "auth != null && auth.token.email_verified == true && (auth.token.email == root.child('access/owner').val() || (root.child('access/emails').exists() == true && root.child('access/emails').val().contains(',' + auth.token.email + ',')))",
+      ".write": "auth != null && auth.token.email_verified == true && auth.token.email == root.child('access/owner').val()"
+    }
+  }
+}

@@ -1,9 +1,7 @@
-// Service worker для Web Push: уведомления приходят через push-сервис браузера (Mozilla, Google, Apple).
-// Лежит в корне сайта рядом с index.html: браузер требует, чтобы он был по этому адресу.
+// Service worker для Web Push: уведомления о задачах
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
-// Сервер шлёт зашифрованный JSON: {title, body, url}.
 self.addEventListener('push', (event) => {
   let d = {};
   try {
@@ -12,12 +10,11 @@ self.addEventListener('push', (event) => {
     d = { body: event.data ? event.data.text() : '' };
   }
   event.waitUntil((async () => {
-    // Если вкладка чата открыта и видна, уведомление не нужно: сообщение и так видно на экране.
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     if (wins.some((w) => w.visibilityState === 'visible')) return;
-    await self.registration.showNotification(d.title || 'Новое сообщение', {
+    await self.registration.showNotification(d.title || 'Новая задача', {
       body: d.body || '',
-      tag: 'chat-message',
+      tag: 'task-update',
       renotify: true,
       icon: './favicon.svg',
       data: { url: d.url || './' },

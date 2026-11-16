@@ -1,6 +1,6 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, signInWithCustomToken, signInWithCredential } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
-import { getDatabase, ref, push, query, limitToLast, onChildAdded, serverTimestamp, remove, set, onValue, onChildRemoved, get } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js';
+import { getAuth, GoogleAuthProvider, onAuthStateChanged, signOut, signInWithCustomToken, signInWithCredential } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
+import { getDatabase, ref, push, query, limitToLast, onValue, serverTimestamp, remove, set, update, get } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js';
 import { firebaseConfig, ownerEmail } from './firebase-config.js';
 import { YANDEX_CLIENT_ID, API_BASE, VAPID_KEY } from './config.js';
 
@@ -10,21 +10,24 @@ const appBox = $('#app');
 const loginError = $('#loginError');
 const status = $('#status');
 const feed = $('#feed');
-const messages = $('#messages');
+const tasksBox = $('#tasks');
 const chatError = $('#chatError');
-const menu = $('#messageMenu');
+const menu = $('#taskMenu');
 
 let auth;
 let db;
 let fbApp;
 let user;
-let stopMessages;
+let stopTasks;
 let stopPin;
 let stopConn;
 let stopOwner;
-let stickToBottom = true;
 let menuPin = '';
-// Владельца держим в одном месте — firebase-config.js, рядом с параметрами проекта.
+
+let allTasks = {};
+let currentFilter = 'all';
+let searchQuery = '';
+
 const OWNER_EMAIL = String(ownerEmail || '').toLowerCase();
 const placeholder = !firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith('ВСТАВЬТЕ') || firebaseConfig.projectId === 'ВАШ-ПРОЕКТ';
 
@@ -34,28 +37,21 @@ function safe(s) {
 function clockMode() {
   try { return localStorage.getItem('chat-clock-mode') || 'auto'; } catch { return 'auto'; }
 }
-function time(ts) {
+function formatDate(ts) {
   const n = Number(ts);
   if (!Number.isFinite(n) || n <= 0) return '';
   try {
     const mode = clockMode();
-    const opts = { hour: 'numeric', minute: '2-digit' };
+    const opts = { day: '2-digit', month: '2-digit', hour: 'numeric', minute: '2-digit' };
     if (mode === '12') opts.hour12 = true;
     if (mode === '24') opts.hour12 = false;
-    return new Intl.DateTimeFormat(undefined, opts).format(new Date(n));
+    return new Intl.DateTimeFormat('ru-RU', opts).format(new Date(n));
   } catch {
-    return 'сейчас';
+    return '';
   }
 }
-function refreshTimes() {
-  document.querySelectorAll('.msg').forEach((node) => {
-    const stamp = node.dataset.timestamp;
-    const target = node.querySelector('.time');
-    if (target && stamp) target.textContent = time(stamp);
-  });
-}
 function hiddenKey() {
-  return 'chat-hidden-messages:' + (user?.uid || 'none');
+  return 'task-hidden:' + (user?.uid || 'none');
 }
 function hiddenIds() {
   try {
@@ -69,15 +65,13 @@ function rememberHidden(id) {
   const hidden = [...new Set([...hiddenIds(), id])].slice(-500);
   try { localStorage.setItem(hiddenKey(), JSON.stringify(hidden)); } catch {}
 }
-function isOwn(m) {
-  return typeof user?.uid === 'string' && user.uid.length > 0 && m?.uid === user.uid;
+function isOwn(t) {
+  return typeof user?.uid === 'string' && user.uid.length > 0 && t?.uid === user.uid;
 }
 let dbOwner = String(OWNER_EMAIL || '');
 function isOwner() {
   return Boolean(dbOwner) && Boolean(user?.email) && user.email.toLowerCase() === dbOwner;
 }
-// Владелец может быть переназначен в админ-панели: она пишет access/owner в базу,
-// поэтому закрепление и ссылка на панель переходят к новому владельцу сами.
 function watchOwner() {
   try {
     return onValue(ref(db, 'access/owner'), (snap) => {
@@ -85,6 +79,7 @@ function watchOwner() {
       if (next && next !== dbOwner) {
         dbOwner = next;
         syncAdminLink();
+        renderTasks();
       }
     }, () => {});
   } catch {
@@ -99,31 +94,13 @@ function showError(e) {
   const code = e?.code || '';
   if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return 'Вход отменён.';
   if (code === 'auth/network-request-failed') return 'Нет сети. Проверьте интернет и попробуйте снова.';
-  if (code.includes('PERMISSION_DENIED') || code.includes('permission_denied') || code.includes('permission-denied')) return 'Вы не в разрешенном списке пользователей, Обратитесь к администратору';
+  if (/permission[-_ ]denied/i.test(`${code} ${e?.message || ''}`)) return 'Вы не в разрешённом списке пользователей. Обратитесь к администратору.';
   if (code === 'auth/unauthorized-domain') return 'Добавьте адрес сайта в Authentication → Settings → Authorized domains.';
   return e?.message || 'Не удалось подключиться.';
 }
 function fail(e) {
   chatError.textContent = showError(e);
   if (String(e?.code || '').includes('permission')) status.textContent = 'нет доступа к базе';
-}
-function animateRemove(node) {
-  if (!node || node.dataset.removing) return;
-  node.dataset.removing = '1';
-  const r = node.getBoundingClientRect();
-  for (let i = 0; i < 18; i++) {
-    const bit = document.createElement('i');
-    bit.className = 'msg-piece';
-    bit.style.left = (r.left + Math.random() * r.width) + 'px';
-    bit.style.top = (r.top + Math.random() * r.height) + 'px';
-    bit.style.setProperty('--dx', ((Math.random() - 0.5) * 220) + 'px');
-    bit.style.setProperty('--dy', ((Math.random() - 0.65) * 190) + 'px');
-    bit.style.setProperty('--rot', ((Math.random() - 0.5) * 600) + 'deg');
-    document.body.append(bit);
-    setTimeout(() => bit.remove(), 700);
-  }
-  node.classList.add('msg-removing');
-  setTimeout(() => { node.remove(); refreshEmpty(); refreshSenders(); }, 500);
 }
 function closeMenu() {
   menu.classList.add('hidden');
@@ -136,35 +113,7 @@ function safeId(id) {
 }
 function closeSettings() {
   const panel = $('#settingsPanel');
-  if (!panel || panel.classList.contains('hidden')) return;
-  panel.classList.add('settings-closing');
-  setTimeout(() => {
-    panel.classList.add('hidden');
-    panel.classList.remove('settings-closing');
-  }, 180);
-}
-function nearBottom() {
-  return feed.scrollHeight - feed.scrollTop - feed.clientHeight < 120;
-}
-function refreshEmpty() {
-  const empty = document.getElementById('empty');
-  if (!empty) return;
-  empty.classList.toggle('hidden', messages.children.length > 0);
-}
-function refreshSenders() {
-  let prev = null;
-  for (const node of messages.children) {
-    const sender = node.querySelector('.sender');
-    if (!sender) { prev = null; continue; }
-    const uid = node.dataset.uid || '';
-    const same = prev !== null && uid !== '' && uid === prev;
-    sender.classList.toggle('sr-only', same);
-    prev = uid;
-  }
-}
-function findMessage(id) {
-  if (!id) return null;
-  return messages.querySelector(`[data-id="${CSS.escape(id)}"]`);
+  if (panel) panel.classList.add('hidden');
 }
 function fmtSize(n) {
   const b = Number(n) || 0;
@@ -175,28 +124,113 @@ function fmtSize(n) {
 function fileButton(f) {
   const name = safe(f.name || 'файл');
   const size = fmtSize(f.size);
-  return `<button type="button" class="file" data-key="${safe(f.key)}" data-name="${name}" aria-label="Скачать файл ${name}"><span class="fi" aria-hidden="true">📄</span><span class="fmeta"><strong>${name}</strong><small>${size ? size + ' · ' : ''}Скачать</small></span></button>`;
+  return `<button type="button" class="file" data-key="${safe(f.key)}" data-name="${name}" aria-label="Скачать файл ${name}"><span>📄</span><span><strong>${name}</strong><small>${size ? size + ' · ' : ''}Скачать</small></span></button>`;
 }
-function addMessage(id, m) {
-  if (!id || !user) return;
-  if (findMessage(id)) return;
-  if (hiddenIds().includes(id)) return;
-  const own = isOwn(m);
-  const follow = stickToBottom || own || nearBottom();
-  const node = document.createElement('article');
-  node.className = 'msg ' + (own ? 'mine' : 'other');
-  node.dataset.id = id;
-  node.dataset.uid = typeof m.uid === 'string' ? m.uid : '';
-  node.dataset.timestamp = Number.isFinite(Number(m.createdAt)) ? String(Number(m.createdAt)) : '';
-  const who = safe(m.name || m.email || 'Участник');
-  node.innerHTML = `${own ? '' : `<div class="sender">${who}</div>`}${m.file ? fileButton(m.file) : ''}${m.file && m.text === m.file.name ? '' : `<div class="body">${safe(m.text || '')}</div>`}<div class="time">${time(m.createdAt)}</div>`;
-  messages.append(node);
-  bindMessageMenu(node, id, m);
-  refreshSenders();
-  refreshEmpty();
-  if (follow) feed.scrollTop = feed.scrollHeight;
+
+const PRIO_LABEL = { high: 'Высокий', medium: 'Средний', low: 'Низкий' };
+const PRIO_WEIGHT = { high: 3, medium: 2, low: 1 };
+
+function isOverdue(deadlineStr, isDone) {
+  if (!deadlineStr || isDone) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  return deadlineStr < today;
 }
-function bindMessageMenu(node, id, m) {
+
+function renderTasks() {
+  if (!user) return;
+  const hidden = new Set(hiddenIds());
+  const entries = Object.entries(allTasks).filter(([id, t]) => t && !hidden.has(id));
+
+  const activeCount = entries.filter(([, t]) => t.status !== 'done').length;
+  $('#counter').textContent = entries.length ? `(${activeCount} активных из ${entries.length})` : '';
+
+  const q = searchQuery.toLowerCase();
+  const filtered = entries.filter(([, t]) => {
+    const done = t.status === 'done';
+    if (currentFilter === 'active' && done) return false;
+    if (currentFilter === 'doing' && t.status !== 'doing') return false;
+    if (currentFilter === 'done' && !done) return false;
+    if (currentFilter === 'mine' && !isOwn(t)) return false;
+
+    if (q) {
+      const hay = `${t.title || ''} ${t.name || ''} ${t.email || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  filtered.sort(([, a], [, b]) => {
+    const aDone = a.status === 'done' ? 1 : 0;
+    const bDone = b.status === 'done' ? 1 : 0;
+    if (aDone !== bDone) return aDone - bDone;
+    const pw = (PRIO_WEIGHT[b.priority] || 2) - (PRIO_WEIGHT[a.priority] || 2);
+    if (pw !== 0) return pw;
+    return (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0);
+  });
+
+  tasksBox.replaceChildren();
+  $('#empty').classList.toggle('hidden', filtered.length > 0);
+
+  for (const [id, t] of filtered) {
+    const done = t.status === 'done';
+    const prio = ['high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium';
+    const st = ['todo', 'doing', 'done'].includes(t.status) ? t.status : 'todo';
+    const overdue = isOverdue(t.deadline, done);
+
+    const node = document.createElement('article');
+    node.className = 'task' + (done ? ' done' : '');
+    node.dataset.id = id;
+
+    const who = safe(t.name || t.email || 'Участник');
+    const deadlineHtml = t.deadline
+      ? `<span class="deadline ${overdue ? 'overdue' : ''}">📅 ${safe(t.deadline)}${overdue ? ' (просрочено)' : ''}</span>`
+      : '';
+
+    node.innerHTML = `
+      <input type="checkbox" class="chk" ${done ? 'checked' : ''} aria-label="Отметить выполненной">
+      <div class="task-main">
+        <div class="task-head">
+          <span class="badge prio-${prio}">${PRIO_LABEL[prio]}</span>
+          <select class="status-select" aria-label="Статус задачи">
+            <option value="todo" ${st === 'todo' ? 'selected' : ''}>К выполнению</option>
+            <option value="doing" ${st === 'doing' ? 'selected' : ''}>В работе</option>
+            <option value="done" ${st === 'done' ? 'selected' : ''}>Готово</option>
+          </select>
+          <span class="task-title">${safe(t.title || '')}</span>
+        </div>
+        ${t.file ? fileButton(t.file) : ''}
+        <div class="task-meta">
+          <span>👤 ${who}</span>
+          <span>🕒 ${formatDate(t.createdAt)}</span>
+          ${deadlineHtml}
+        </div>
+      </div>
+    `;
+
+    node.querySelector('.chk').addEventListener('change', async (e) => {
+      const nextStatus = e.target.checked ? 'done' : 'todo';
+      try {
+        await update(ref(db, `tasks/${id}`), { status: nextStatus, updatedAt: Date.now() });
+      } catch (err) {
+        e.target.checked = !e.target.checked;
+        fail(err);
+      }
+    });
+
+    node.querySelector('.status-select').addEventListener('change', async (e) => {
+      try {
+        await update(ref(db, `tasks/${id}`), { status: e.target.value, updatedAt: Date.now() });
+      } catch (err) {
+        fail(err);
+      }
+    });
+
+    bindTaskMenu(node, id, t);
+    tasksBox.append(node);
+  }
+}
+
+function bindTaskMenu(node, id, t) {
   let timer;
   let hold = false;
   let startX = 0;
@@ -204,18 +238,26 @@ function bindMessageMenu(node, id, m) {
   const open = (x, y) => {
     if (!user) return;
     menu.dataset.id = id;
-    menu.dataset.own = isOwn(m) ? '1' : '0';
-    menuPin = String(m.text || '');
-    menu.innerHTML = `<button type="button" data-action="delete-local">Удалить у меня</button>${isOwn(m) ? '<button type="button" data-action="delete">Удалить у всех</button>' : ''}${isOwner() ? '<button type="button" data-action="pin">Закрепить сообщение</button>' : ''}`;
+    menu.dataset.own = (isOwn(t) || isOwner()) ? '1' : '0';
+    menuPin = String(t.title || '');
+    menu.innerHTML = `
+      <button type="button" data-action="hide-local">Скрыть у меня</button>
+      ${(isOwn(t) || isOwner()) ? '<button type="button" data-action="delete">Удалить у всех</button>' : ''}
+      ${isOwner() ? '<button type="button" data-action="pin">Закрепить как цель</button>' : ''}
+    `;
     menu.classList.remove('hidden');
-    const width = menu.offsetWidth || 180;
-    const height = menu.offsetHeight || 44;
+    const width = menu.offsetWidth || 190;
+    const height = menu.offsetHeight || 80;
     menu.style.left = Math.max(8, Math.min(x, innerWidth - width - 8)) + 'px';
     menu.style.top = Math.max(8, Math.min(y, innerHeight - height - 8)) + 'px';
   };
-  node.addEventListener('contextmenu', (e) => { e.preventDefault(); open(e.clientX, e.clientY); });
+  node.addEventListener('contextmenu', (e) => {
+    if (e.target.closest('select,input,button')) return;
+    e.preventDefault();
+    open(e.clientX, e.clientY);
+  });
   node.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || e.target.closest('select,input,button')) return;
     hold = false;
     startX = e.clientX;
     startY = e.clientY;
@@ -233,9 +275,10 @@ function bindMessageMenu(node, id, m) {
     hold = false;
   });
 }
+
 function listenPin() {
   stopPin?.();
-  stopPin = onValue(ref(db, 'pinnedMessage'), (snap) => {
+  stopPin = onValue(ref(db, 'pinnedTask'), (snap) => {
     const p = snap.val();
     const bar = $('#pinbar');
     if (p?.text) {
@@ -248,44 +291,38 @@ function listenPin() {
     }
   }, fail);
 }
+
 function listen() {
-  stopMessages?.();
-  messages.replaceChildren();
-  stickToBottom = true;
+  stopTasks?.();
+  allTasks = {};
+  tasksBox.replaceChildren();
   stopOwner?.();
   stopOwner = watchOwner();
   syncAdminLink();
   status.textContent = 'Соединяемся…';
   chatError.textContent = '';
-  const q = query(ref(db, 'messages'), limitToLast(100));
-  const stopAdded = onChildAdded(q, (s) => addMessage(s.key, s.val() || {}), fail);
-  // Удаления слушаем на том же ограниченном запросе, иначе клиент скачивает всю переписку.
-  const stopRemoved = onChildRemoved(q, (s) => {
-    animateRemove(findMessage(s.key));
+
+  const q = query(ref(db, 'tasks'), limitToLast(250));
+  stopTasks = onValue(q, (snap) => {
+    allTasks = snap.val() || {};
+    renderTasks();
   }, fail);
-  stopMessages = () => { stopAdded(); stopRemoved(); };
+
   listenPin();
-  refreshEmpty();
   stopConn?.();
   stopConn = onValue(ref(db, '.info/connected'), (snap) => {
-    status.textContent = snap.val() ? 'Подключено' : 'Нет сети, ждём связь';
+    status.textContent = snap.val() ? 'Подключено · синхронизировано' : 'Нет сети, ждём связь';
   });
-  setTimeout(() => {
-    stickToBottom = false;
-    feed.scrollTop = feed.scrollHeight;
-  }, 0);
 }
+
 function stopAll() {
-  stopMessages?.();
-  stopMessages = null;
-  stopPin?.();
-  stopPin = null;
-  stopConn?.();
-  stopConn = null;
-  stopOwner?.();
-  stopOwner = null;
+  stopTasks?.(); stopTasks = null;
+  stopPin?.(); stopPin = null;
+  stopConn?.(); stopConn = null;
+  stopOwner?.(); stopOwner = null;
   user = null;
-  messages.replaceChildren();
+  allTasks = {};
+  tasksBox.replaceChildren();
   $('#pinbar')?.classList.remove('visible');
   $('#pintext').textContent = '';
   closeMenu();
@@ -294,6 +331,7 @@ function stopAll() {
   photo.classList.add('hidden');
   photo.removeAttribute('src');
 }
+
 function showPhoto(url) {
   const photo = $('#photo');
   if (typeof url === 'string' && url.startsWith('https://')) {
@@ -304,40 +342,20 @@ function showPhoto(url) {
   photo.classList.add('hidden');
   photo.removeAttribute('src');
 }
-function bindViewport() {
-  const vv = window.visualViewport;
-  if (!vv) return;
-  const apply = () => {
-    appBox.style.height = Math.round(vv.height) + 'px';
-    appBox.style.transform = vv.offsetTop ? `translateY(${Math.round(vv.offsetTop)}px)` : '';
-    if (document.activeElement === $('#text')) feed.scrollTop = feed.scrollHeight;
-  };
-  vv.addEventListener('resize', apply);
-  vv.addEventListener('scroll', apply);
-  apply();
-}
-function wantsRedirect() {
-  return matchMedia('(pointer:coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-}
-
-bindViewport();
-const provider = new GoogleAuthProvider();
-provider.setCustomParameters({ prompt: 'select_account' });
 
 if (!placeholder) {
   const firebase = initializeApp(firebaseConfig);
   fbApp = firebase;
   auth = getAuth(firebase);
   db = getDatabase(firebase);
+
   const loginBtn = $('#loginBtn');
-  // Прототип GIS: Google отдаёт ID-токен прямо в кнопке, без редиректа через firebaseapp.com.
   const GIS_CLIENT_ID = '887986973315-3pepkalo7oe4dl70025rij8nm8sgq3i5.apps.googleusercontent.com';
   loginBtn.classList.add('hidden');
   const gisBtn = $('#gisBtn');
   let tokenClient = null;
   let gisLoading = null;
-  // Скрипт Google (gsi/client) грузится только когда он нужен: при наведении, касании или клике.
-  // Так при открытии страницы Google не ставит свои cookie.
+
   function loadGis() {
     if (window.google?.accounts?.oauth2) return Promise.resolve();
     if (!gisLoading) {
@@ -352,7 +370,7 @@ if (!placeholder) {
     }
     return gisLoading;
   }
-  // Своя кнопка, окно Google открывается по клику (всплывающее, без редиректа).
+
   function initGis() {
     tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GIS_CLIENT_ID,
@@ -370,6 +388,7 @@ if (!placeholder) {
       error_callback: () => { loginError.textContent = 'Окно входа Google закрыто, попробуйте ещё раз.'; },
     });
   }
+
   const warmGis = () => {
     if (tokenClient || gisLoading) return;
     loadGis().then(initGis).catch(() => {});
@@ -380,12 +399,12 @@ if (!placeholder) {
   gisBtn.addEventListener('click', (e) => {
     e.preventDefault();
     loginError.textContent = '';
-    // Если скрипт уже есть, окно открывается сразу, в том же жесте пользователя.
     if (tokenClient) { tokenClient.requestAccessToken(); return; }
     loadGis()
       .then(() => { if (!tokenClient) initGis(); tokenClient.requestAccessToken(); })
-      .catch(() => { loginError.textContent = 'Не загрузился вход через Google. Проверьте сеть и попробуйте ещё раз.'; });
+      .catch(() => { loginError.textContent = 'Не загрузился вход через Google. Проверьте сеть.'; });
   });
+
   const yandexBtn = $('#yandexBtn');
   yandexBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -394,12 +413,12 @@ if (!placeholder) {
     const back = location.origin + location.pathname;
     location.href = 'https://oauth.yandex.ru/authorize?response_type=token&client_id=' + encodeURIComponent(YANDEX_CLIENT_ID) + '&redirect_uri=' + encodeURIComponent(back);
   });
-  // Прогрев шлюза входа: холодный старт функции около 1,5 с, тёплый около 0,5 с.
+
   if (API_BASE) fetch(API_BASE + '/yandex-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', keepalive: true }).catch(() => {});
   const yaToken = new URLSearchParams(location.hash.slice(1)).get('access_token');
   if (yaToken) {
     history.replaceState(null, '', location.pathname + location.search);
-    loginBtn.disabled = true;
+    gisBtn.disabled = true;
     yandexBtn.disabled = true;
     fetch(API_BASE + '/yandex-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: yaToken }) })
       .then(async (r) => {
@@ -408,29 +427,26 @@ if (!placeholder) {
         await signInWithCustomToken(auth, d.customToken);
       })
       .catch((err) => { loginError.textContent = err.message || 'Не удалось войти через Яндекс.'; })
-      .finally(() => { loginBtn.disabled = false; yandexBtn.disabled = false; });
+      .finally(() => { gisBtn.disabled = false; yandexBtn.disabled = false; });
   }
-  const ACCESS_DENIED = 'Вы не в разрешенном списке пользователей, Обратитесь к администратору';
+
+  const ACCESS_DENIED = 'Вы не в разрешённом списке пользователей. Обратитесь к администратору.';
   let pendingLoginError = '';
   let checkingAccess = false;
-  function deniedByRules(err) {
-    const blob = `${err?.code || ''} ${err?.message || ''}`;
-    return /permission[-_ ]denied/i.test(blob);
-  }
-  async function openChatIfAllowed(u) {
+
+  async function openAppIfAllowed(u) {
     if (!u || checkingAccess) return;
-    if (user?.uid === u.uid && stopMessages) return;
+    if (user?.uid === u.uid && stopTasks) return;
     checkingAccess = true;
     login.classList.remove('hidden');
     appBox.classList.add('hidden');
     loginError.textContent = 'Проверяем доступ…';
-    loginBtn.disabled = true;
     try {
-      await get(query(ref(db, 'messages'), limitToLast(1)));
+      await get(query(ref(db, 'tasks'), limitToLast(1)));
     } catch (err) {
       login.classList.remove('hidden');
       appBox.classList.add('hidden');
-      if (deniedByRules(err)) {
+      if (/permission[-_ ]denied/i.test(`${err?.code || ''} ${err?.message || ''}`)) {
         pendingLoginError = ACCESS_DENIED;
         loginError.textContent = ACCESS_DENIED;
         try { await signOut(auth); } catch {}
@@ -440,12 +456,8 @@ if (!placeholder) {
       return;
     } finally {
       checkingAccess = false;
-      loginBtn.disabled = false;
     }
     if (auth.currentUser?.uid !== u.uid) return;
-    stopMessages?.();
-    stopMessages = null;
-    messages.replaceChildren();
     user = u;
     loginError.textContent = '';
     login.classList.add('hidden');
@@ -454,12 +466,7 @@ if (!placeholder) {
     showPhoto(u.photoURL);
     listen();
   }
-  loginBtn.addEventListener('click', async (e) => {
-    if (!auth.currentUser) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    await openChatIfAllowed(auth.currentUser);
-  }, true);
+
   onAuthStateChanged(auth, (u) => {
     if (!u) {
       stopAll();
@@ -469,25 +476,38 @@ if (!placeholder) {
       pendingLoginError = '';
       return;
     }
-    openChatIfAllowed(u);
+    openAppIfAllowed(u);
   });
 } else {
   $('#loginBtn').addEventListener('click', (e) => {
     e.preventDefault();
     loginError.textContent = 'Сначала укажите настройки Firebase в firebase-config.js.';
   });
-  status.textContent = 'Настройте Firebase';
 }
+
+$('#filterTabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.tab');
+  if (!btn) return;
+  document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentFilter = btn.dataset.filter;
+  renderTasks();
+});
+
+$('#searchInput').addEventListener('input', (e) => {
+  searchQuery = e.target.value.trim();
+  renderTasks();
+});
 
 $('#clockMode').value = ['auto', '12', '24'].includes(clockMode()) ? clockMode() : 'auto';
 $('#settingsBtn').onclick = () => $('#settingsPanel').classList.remove('hidden');
 $('#settingsClose').onclick = closeSettings;
 $('#settingsPanel').onclick = (e) => { if (e.target === $('#settingsPanel')) closeSettings(); };
 $('#clockMode').onchange = (e) => {
-  const mode = e.target.value;
-  try { localStorage.setItem('chat-clock-mode', mode); } catch {}
-  refreshTimes();
+  try { localStorage.setItem('chat-clock-mode', e.target.value); } catch {}
+  renderTasks();
 };
+
 function themeMode() {
   try { return localStorage.getItem('chat-theme') === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
 }
@@ -504,47 +524,53 @@ $('#themeMode').onchange = (e) => {
   try { localStorage.setItem('chat-theme', mode); } catch {}
   applyTheme(mode);
 };
+
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  closeSettings();
-  closeMenu();
+  if (e.key === 'Escape') { closeSettings(); closeMenu(); }
 });
 feed.addEventListener('scroll', closeMenu, { passive: true });
 window.addEventListener('resize', closeMenu);
 
 document.addEventListener('click', async (e) => {
-  if (!e.target.closest('#messageMenu')) {
+  if (!e.target.closest('#taskMenu')) {
     closeMenu();
     return;
   }
   const action = e.target.closest('button')?.dataset.action;
   const id = menu.dataset.id;
   const pinText = menuPin;
-  const own = menu.dataset.own === '1';
+  const canDelete = menu.dataset.own === '1';
   if (!action || !safeId(id) || !user) return;
   closeMenu();
   try {
-    if (action === 'delete-local') {
+    if (action === 'hide-local') {
       rememberHidden(id);
-      animateRemove(findMessage(id));
+      renderTasks();
       return;
     }
     if (action === 'delete') {
-      if (!own) return;
-      if (!confirm('Удалить это сообщение у всех участников?')) return;
-      await remove(ref(db, `messages/${id}`));
+      if (!canDelete) return;
+      if (!confirm('Удалить эту задачу у всех участников?')) return;
+      await remove(ref(db, `tasks/${id}`));
       return;
     }
     if (action === 'pin') {
       if (!isOwner()) return;
       const text = pinText.trim().slice(0, 2000);
       if (!text) return;
-      await set(ref(db, 'pinnedMessage'), { text, by: user.email, createdAt: Date.now() });
+      await set(ref(db, 'pinnedTask'), { text, by: user.email, createdAt: Date.now() });
     }
   } catch (err) {
     fail(err);
   }
 });
+
+$('#unpin').onclick = async () => {
+  if (!isOwner()) return;
+  try { await remove(ref(db, 'pinnedTask')); }
+  catch (e) { fail(e); }
+};
+$('#logout').onclick = () => auth && signOut(auth);
 
 let pendingFile = null;
 let sending = false;
@@ -553,29 +579,25 @@ const attachBtn = $('#attachBtn');
 const chip = $('#filechip');
 const sendBtn = $('#send');
 const textInput = $('#text');
-// Плашка выбранного файла: видно, что файл прикреплён, и его можно убрать до отправки.
+
 function showChip(f) {
   $('#fcName').textContent = f.name;
   $('#fcSize').textContent = fmtSize(f.size) || 'Размер неизвестен';
-  chip.classList.remove('sending', 'hidden');
+  chip.classList.remove('hidden');
 }
 function clearFile() {
   pendingFile = null;
   fileInput.value = '';
   attachBtn.classList.remove('on');
-  attachBtn.title = 'Прикрепить файл';
   chip.classList.add('hidden');
-  chip.classList.remove('sending');
   syncSend();
 }
-// Кнопка «Отправить» активна только если есть текст или файл и ничего не отправляется.
 function syncSend() {
   const ready = Boolean(textInput.value.trim()) || Boolean(pendingFile);
   sendBtn.disabled = !ready || sending;
 }
 $('#fcRemove').onclick = clearFile;
 textInput.addEventListener('input', syncSend);
-syncSend();
 attachBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   const f = fileInput.files[0];
@@ -584,16 +606,19 @@ fileInput.addEventListener('change', () => {
   if (f.size > 20 * 1024 * 1024) { chatError.textContent = 'Файл больше 20 МБ.'; fileInput.value = ''; return; }
   pendingFile = f;
   attachBtn.classList.add('on');
-  attachBtn.title = f.name;
   showChip(f);
   syncSend();
 });
+
 async function uploadFile(f) {
   const idToken = await user.getIdToken();
-  const r = await fetch(API_BASE + '/upload-form', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken, fileName: f.name, size: f.size, contentType: f.type || 'application/octet-stream' }) });
+  const r = await fetch(API_BASE + '/upload-form', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idToken, fileName: f.name, size: f.size, contentType: f.type || 'application/octet-stream' }),
+  });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || 'Не удалось загрузить файл.');
-  // Загрузка формой: поля политики идут первыми, файл последним. Размер проверяет хранилище.
   const form = new FormData();
   Object.entries(d.post.fields).forEach(([name, value]) => form.append(name, value));
   form.append('file', f);
@@ -601,16 +626,20 @@ async function uploadFile(f) {
   if (!put.ok) throw new Error('Файл не загрузился, попробуйте ещё раз.');
   return { key: d.key, name: f.name, size: f.size, type: d.contentType };
 }
-messages.addEventListener('click', async (e) => {
+
+tasksBox.addEventListener('click', async (e) => {
   const btn = e.target.closest('button[data-key]');
   if (!btn || !user) return;
   btn.disabled = true;
   try {
     const idToken = await user.getIdToken();
-    const r = await fetch(API_BASE + '/file-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken, key: btn.dataset.key, name: btn.dataset.name }) });
+    const r = await fetch(API_BASE + '/file-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken, key: btn.dataset.key, name: btn.dataset.name }),
+    });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.error || 'Нет доступа к файлу.');
-    // Ссылка отдаётся с заголовком attachment: браузер сохраняет файл, вкладка не открывается.
     const a = document.createElement('a');
     a.href = d.url;
     a.rel = 'noopener';
@@ -623,21 +652,11 @@ messages.addEventListener('click', async (e) => {
     btn.disabled = false;
   }
 });
-$('#unpin').onclick = async () => {
-  if (!isOwner()) return;
-  try { await remove(ref(db, 'pinnedMessage')); }
-  catch (e) { fail(e); }
-};
-$('#logout').onclick = () => auth && signOut(auth);
 
-// ---------- уведомления о новых сообщениях ----------
-// Web Push по стандарту: подписка через PushManager, доставку ведёт push-сервис браузера
-// (Mozilla для Firefox, Google для Chrome, Apple для Safari). Firebase здесь не нужен.
 const pushBtn = $('#pushBtn');
 const pushSupported = 'serviceWorker' in navigator && 'Notification' in window && 'PushManager' in window && Boolean(VAPID_KEY);
 if (pushSupported) {
   pushBtn.classList.remove('hidden');
-  // Регистрируем сервис-воркер сразу, чтобы показать, подписано ли устройство уже.
   navigator.serviceWorker.register('sw.js').then(async (reg) => {
     const sub = await reg.pushManager.getSubscription();
     setPushOn(Boolean(sub) && Notification.permission === 'granted');
@@ -645,19 +664,16 @@ if (pushSupported) {
 }
 function setPushOn(on) {
   pushBtn.classList.toggle('on', on);
-  pushBtn.querySelector('.lbl').textContent = on ? 'Уведомления включены' : 'Уведомления';
+  pushBtn.querySelector('.lbl').textContent = on ? 'Уведомления вкл.' : 'Уведомления';
 }
-// VAPID-ключ приходит строкой base64url, для подписки нужны байты.
 function vapidBytes(s) {
   const b64 = (s + '='.repeat((4 - (s.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/');
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
-// Ключ записи в базе: в Realtime Database нельзя «.», «#», «$», «[», «]», «/», поэтому берём хеш адреса подписки.
 async function subKey(endpoint) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
-// Подписка сохраняется под uid в pushTokens; сервер шлёт push только тем, у кого есть подписка и почта допущена.
 pushBtn.onclick = async () => {
   if (!user || !fbApp) return;
   chatError.textContent = '';
@@ -668,9 +684,8 @@ pushBtn.onclick = async () => {
     const reg = await navigator.serviceWorker.register('sw.js');
     const want = vapidBytes(VAPID_KEY);
     let sub = await reg.pushManager.getSubscription();
-    // Если подписка сделана с другим ключом, её нужно пересоздать.
     if (sub) {
-      const have = sub.options && sub.options.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
+      const have = sub.options?.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
       if (!have || have.length !== want.length || have.some((b, i) => b !== want[i])) {
         await sub.unsubscribe();
         sub = null;
@@ -691,7 +706,7 @@ pushBtn.onclick = async () => {
     pushBtn.disabled = false;
   }
 };
-// Сервер сам рассылает push остальным участникам. Чат не ждём: сбой уведомления не должен мешать сообщению.
+
 async function notifyOthers(text, name) {
   try {
     if (!API_BASE || !user) return;
@@ -699,50 +714,54 @@ async function notifyOthers(text, name) {
     fetch(API_BASE + '/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idToken, text: String(text || '').slice(0, 140), name: String(name || 'Участник').slice(0, 60) }),
+      body: JSON.stringify({
+        idToken,
+        text: ('Новая задача: ' + String(text || '')).slice(0, 140),
+        name: String(name || 'Участник').slice(0, 60),
+      }),
       keepalive: true,
     }).catch(() => {});
   } catch {}
 }
+
 $('#form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const input = $('#text');
-  const caption = input.value.trim().slice(0, 2000);
+  const title = textInput.value.trim().slice(0, 2000);
   const file = pendingFile;
-  if ((!caption && !file) || !user || !db) return;
-  input.disabled = true;
+  if ((!title && !file) || !user || !db) return;
+
+  textInput.disabled = true;
   sending = true;
   sendBtn.disabled = true;
-  sendBtn.classList.add('busy');
   attachBtn.disabled = true;
-  if (file) {
-    chip.classList.add('sending');
-    $('#fcSize').textContent = 'Отправляется…';
-  }
+  if (file) $('#fcSize').textContent = 'Загружается…';
+
   try {
     const data = {
       uid: user.uid,
       name: user.displayName || user.email || 'Участник',
       email: user.email || '',
-      text: caption || (file ? file.name : ''),
-      createdAt: serverTimestamp()
+      title: title || (file ? file.name : ''),
+      priority: $('#priority').value || 'medium',
+      status: 'todo',
+      deadline: $('#deadline').value || '',
+      createdAt: serverTimestamp(),
+      updatedAt: Date.now(),
     };
     if (file) data.file = await uploadFile(file);
-    await push(ref(db, 'messages'), data);
-    notifyOthers(data.text, data.name);
-    input.value = '';
+    await push(ref(db, 'tasks'), data);
+    notifyOthers(data.title, data.name);
+    textInput.value = '';
+    $('#deadline').value = '';
     clearFile();
     chatError.textContent = '';
   } catch (err) {
     fail(err);
   } finally {
-    input.disabled = false;
+    textInput.disabled = false;
     sending = false;
-    sendBtn.classList.remove('busy');
     attachBtn.disabled = false;
-    chip.classList.remove('sending');
-    if (pendingFile) $('#fcSize').textContent = fmtSize(pendingFile.size) || 'Размер неизвестен';
     syncSend();
-    input.focus();
+    textInput.focus();
   }
 });

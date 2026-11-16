@@ -1,17 +1,11 @@
-// Админ-панель чата: то же, что делает allow_emails.py, только в браузере.
-// Список почт живёт в базе (access/emails), правила базы читают его сами,
-// поэтому после каждой правки публиковать правила вручную не нужно.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
-import { getDatabase, ref, get, set, push, query, limitToLast, onValue, serverTimestamp } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js';
+import { getDatabase, ref, get, set, push, query, limitToLast, onValue } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js';
 import { firebaseConfig, ownerEmail } from '../firebase-config.js';
 
 const $ = (s) => document.querySelector(s);
 const EMAIL_RE = /^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/;
 const DEFAULT_OWNER = String(ownerEmail || '').toLowerCase();
-// Пока в базе нет записи access/emails, действует этот список: ровно те почты,
-// что были прописаны в правилах раньше, чтобы после публикации никто не потерял доступ.
-// Зашитых почт в правилах больше нет: доступ решают только записи в базе.
 const DEFAULT_EMAILS = [];
 
 let auth;
@@ -23,8 +17,6 @@ let draftProviders = {};
 let stopAccess;
 let stopLog;
 
-const isOwner = () => Boolean(me?.email) && String(me.email).toLowerCase() === state.owner;
-
 function parseList(raw) {
   if (typeof raw !== 'string') return [];
   return [...new Set(raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean))];
@@ -32,9 +24,6 @@ function parseList(raw) {
 function packList(emails) {
   return emails.length ? `,${emails.join(',')},` : '';
 }
-// Способ входа для каждой почты: google или yandex. Хранится отдельно от списка,
-// чтобы правила базы и вход через Яндекс работали как раньше: доступ по-прежнему
-// решает только список почт. Почты без записи считаются Google (так было раньше).
 const PROVIDERS = { google: 'Google', yandex: 'Яндекс' };
 function parseProviders(raw) {
   const map = {};
@@ -56,7 +45,7 @@ function syncProviderHint() {
   const yandex = $('#newProvider').value === 'yandex';
   $('#newEmail').placeholder = yandex ? 'почта@yandex.ru' : 'почта@gmail.com';
   $('#providerHint').textContent = yandex
-    ? 'Войдёт через Яндекс ID. Укажите почту, которая в Яндекс ID стоит основной (обычно @yandex.ru или @ya.ru). Если вход не проходит, проверьте основную почту в профиле Яндекс ID.'
+    ? 'Войдёт через Яндекс ID. Укажите почту, которая в Яндекс ID стоит основной (обычно @yandex.ru или @ya.ru).'
     : 'Войдёт через кнопку Google. Укажите почту Gmail или Google Workspace.';
 }
 function fmt(ts) {
@@ -81,7 +70,6 @@ function normalize(value) {
   return email;
 }
 
-// ---------- состояние ----------
 function loadState(snapshot) {
   const v = snapshot && typeof snapshot === 'object' ? snapshot : {};
   state = {
@@ -98,7 +86,7 @@ function loadState(snapshot) {
   render();
 }
 function dirty() {
-  if (!state.exists) return true; // список ещё ни разу не сохранён в базу
+  if (!state.exists) return true;
   return draft.length !== state.emails.length || draft.some((e, i) => e !== state.emails[i]);
 }
 function render() {
@@ -152,7 +140,6 @@ function render() {
   $('#saveMsg').textContent = changed ? 'Есть несохранённые правки.' : $('#saveMsg').textContent;
 }
 
-// ---------- действия ----------
 async function save() {
   $('#saveMsg').textContent = '';
   $('#listError').textContent = '';
@@ -169,7 +156,7 @@ async function save() {
       updatedBy: me.email,
     });
     await log('save', `${emails.length} почт(ы): ${emails.join(', ')}`);
-    $('#saveMsg').textContent = 'Сохранено. Новый список уже действует в чате.';
+    $('#saveMsg').textContent = 'Сохранено. Новый список уже действует.';
   } catch (err) {
     $('#listError').textContent = showError(err);
   } finally {
@@ -193,39 +180,31 @@ async function setOwner() {
 async function log(action, text) {
   try {
     await set(push(ref(db, 'accessLog')), { action, text, by: me?.email || '', at: Date.now() });
-  } catch { /* журнал не должен ломать сохранение */ }
+  } catch {}
 }
 
-// ---------- правила ----------
-// В правилах нет тернарного оператора, зато && и || считаются слева направо
-// с остановкой: если слева false, правая часть не вычисляется. Поэтому
-// проверка exists() стоит перед contains() и null никогда не вызывается.
 function allowExpr() {
   const list = "root.child('access/emails')";
-  return (
-    'auth != null && auth.token.email_verified == true && ('
-    + `auth.token.email == '${DEFAULT_OWNER}'`
-    + " || auth.token.email == root.child('access/owner').val()"
-    + ' || '
-    + `(${list}.exists() == true && ${list}.val().contains(',' + auth.token.email + ','))`
-    + ')'
-  );
+  const base = DEFAULT_OWNER
+    ? `auth.token.email == '${DEFAULT_OWNER}' || auth.token.email == root.child('access/owner').val()`
+    : `auth.token.email == root.child('access/owner').val()`;
+  return `auth != null && auth.token.email_verified == true && (${base} || (${list}.exists() == true && ${list}.val().contains(',' + auth.token.email + ',')))`;
 }
-// Первый владелец из конфига остаётся с доступом всегда: иначе при потере
-// записи access/owner панель стала бы недоступна и починить её было бы нечем.
 function ownerExpr() {
-  return (
-    'auth != null && auth.token.email_verified == true && ('
-    + `auth.token.email == '${DEFAULT_OWNER}'`
-    + " || auth.token.email == root.child('access/owner').val()"
-    + ')'
-  );
+  const base = DEFAULT_OWNER
+    ? `auth.token.email == '${DEFAULT_OWNER}' || auth.token.email == root.child('access/owner').val()`
+    : `auth.token.email == root.child('access/owner').val()`;
+  return `auth != null && auth.token.email_verified == true && (${base})`;
 }
 function buildRules() {
   const allowed = allowExpr();
   const owner = ownerExpr();
   const fileOk = `(!newData.child('file').exists() || (newData.child('file').hasChildren(['key','name','size','type']) && newData.child('file').child('key').isString() && newData.child('file').child('key').val().length <= 200 && newData.child('file').child('name').isString() && newData.child('file').child('name').val().length <= 200 && newData.child('file').child('size').isNumber()))`;
-  const messageWrite = `${allowed} && ((newData.exists() && !data.exists() && newData.child('uid').val() == auth.uid && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 2000 && newData.child('email').val() == auth.token.email && newData.child('name').isString() && newData.child('name').val().length <= 120 && newData.hasChildren(['uid','name','email','text','createdAt']) && ${fileOk} && newData.child('createdAt').isNumber() && newData.child('createdAt').val() <= now + 60000 && newData.child('createdAt').val() >= now - 60000) || (data.exists() && !newData.exists() && data.child('uid').val() == auth.uid))`;
+  const taskCreate = `newData.exists() && !data.exists() && newData.child('uid').val() == auth.uid && newData.child('email').val() == auth.token.email && newData.child('title').isString() && newData.child('title').val().length > 0 && newData.child('title').val().length <= 2000 && newData.child('name').isString() && newData.child('name').val().length <= 120 && newData.hasChildren(['uid','name','email','title','priority','status','createdAt']) && ${fileOk}`;
+  const taskUpdate = `newData.exists() && data.exists() && newData.child('uid').val() == data.child('uid').val() && newData.child('email').val() == data.child('email').val() && newData.child('createdAt').val() == data.child('createdAt').val() && newData.child('title').isString() && newData.child('title').val().length > 0 && newData.child('title').val().length <= 2000`;
+  const ownerDel = DEFAULT_OWNER ? `auth.token.email == root.child('access/owner').val() || auth.token.email == '${DEFAULT_OWNER}'` : `auth.token.email == root.child('access/owner').val()`;
+  const taskDelete = `data.exists() && !newData.exists() && (data.child('uid').val() == auth.uid || ${ownerDel})`;
+
   return {
     rules: {
       '.read': false,
@@ -240,7 +219,6 @@ function buildRules() {
           '.write': `${owner} && newData.child('by').val() == auth.token.email && newData.child('at').isNumber() && newData.hasChildren(['action','text','by','at'])`,
         },
       },
-      // Токены уведомлений: каждый пишет только свои, читает только сервер (он обходит правила).
       pushTokens: {
         '.read': false,
         $uid: {
@@ -250,26 +228,15 @@ function buildRules() {
           },
         },
       },
-      messages: {
+      tasks: {
         '.read': allowed,
         $id: {
-          '.write': messageWrite,
-          uid: { '.validate': true },
-          name: { '.validate': true },
-          email: { '.validate': true },
-          text: { '.validate': true },
-          createdAt: { '.validate': true },
-          file: {
-            key: { '.validate': true },
-            name: { '.validate': true },
-            size: { '.validate': true },
-            type: { '.validate': true },
-            $other: { '.validate': false },
-          },
-          $other: { '.validate': false },
+          '.write': `${allowed} && ((${taskCreate}) || (${taskUpdate}) || (${taskDelete}))`,
+          priority: { '.validate': "newData.val() == 'low' || newData.val() == 'medium' || newData.val() == 'high'" },
+          status: { '.validate': "newData.val() == 'todo' || newData.val() == 'doing' || newData.val() == 'done'" },
         },
       },
-      pinnedMessage: {
+      pinnedTask: {
         '.read': allowed,
         '.write': owner,
       },
@@ -280,7 +247,6 @@ function rulesText() {
   return JSON.stringify(buildRules(), null, 2) + '\n';
 }
 
-// ---------- вход ----------
 function wantsRedirect() {
   return matchMedia('(pointer:coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }
@@ -288,8 +254,6 @@ function startWatch() {
   stopAccess?.();
   stopLog?.();
   stopAccess = onValue(ref(db, 'access'), (snap) => {
-    // Пока локальная копия не совпала с базой, не перерисовываем: иначе первая
-    // же правка стирается первым снимком базы.
     if (state.exists && dirty()) return;
     loadState(snap.val());
   }, (err) => {
@@ -337,7 +301,6 @@ async function enter(u) {
 }
 
 function init() {
-  // тема
   const saved = (() => { try { return localStorage.getItem('chat-theme'); } catch { return null; } })();
   const theme = saved === 'dark' ? 'dark' : 'light';
   document.documentElement.dataset.theme = theme;

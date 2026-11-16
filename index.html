@@ -2,220 +2,381 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">
 <meta name="theme-color" content="#f3f1ec">
-<title>Менеджер задач</title>
-<link rel="icon" type="image/svg+xml" href="./favicon.svg">
+<meta name="color-scheme" content="light">
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://apis.google.com">
+<link rel="preconnect" href="https://accounts.google.com">
+<link rel="preconnect" href="https://all823218.firebaseapp.com">
+<link rel="preconnect" href="https://all823218-default-rtdb.firebaseio.com" crossorigin>
+<link rel="preconnect" href="https://d5du1fva82lh827rqls4.764nr5vy.apigw.yandexcloud.net" crossorigin>
+<link rel="preconnect" href="https://oauth.yandex.ru">
+<script>(function(){var t="light";try{t=localStorage.getItem("chat-theme")||"light"}catch(e){}if(t!=="dark")t="light";document.documentElement.dataset.theme=t;var m=document.querySelector('meta[name="theme-color"]');if(m)m.content=t==="dark"?"#121614":"#f3f1ec";var c=document.querySelector('meta[name="color-scheme"]');if(c)c.content=t})();</script>
+<title>Мой чат</title>
+<meta name="description" content="Личный чат. Вход через Google или Яндекс, сообщения видят только допущенные участники.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://all823218-default-rtdb.firebaseio.com" crossorigin>
 <style>
+/* ---------- Тема ---------- */
 :root{
-  --bg:#f3f1ec;--card:#ffffff;--ink:#17212b;--muted:#6b7a88;--line:#e4e1d8;
-  --blue:#1674c7;--blue-soft:#e8f2fc;--danger:#c43d4b;--ok:#1a7f4b;--warn:#b7791f;--soft:#ebe8e0;
+  --bg:#f3f1ec;
+  --chat-bg:#ebe8e1;
+  --surface:#ffffff;
+  --ink:#1f2421;
+  --muted:#5a564f;
+  --line:#e2ded5;
+  --accent:#2f6b5c;
+  --accent-ink:#ffffff;
+  --sender:#2f6b5c;
+  --mine:#dcefe6;
+  --other:#ffffff;
+  --danger:#b4424f;
+  --warn-bg:#fbf3dc;
+  --warn-line:#eadcae;
+  --warn-ink:#7a5a00;
+  --shadow:0 1px 2px rgba(31,36,33,.08);
+  --radius:14px;
 }
 html[data-theme="dark"]{
-  --bg:#121614;--card:#1a201d;--ink:#f0f3f1;--muted:#93a199;--line:#2a332e;
-  --blue:#3b8ee6;--blue-soft:#1b2f42;--danger:#ff8b98;--ok:#5fd39b;--warn:#f6ad55;--soft:#232b27;
   color-scheme:dark;
+  --bg:#121614;
+  --chat-bg:#161b19;
+  --surface:#1b201e;
+  --ink:#eef2ef;
+  --muted:#9aa59f;
+  --line:#2c3430;
+  --accent:#4f9c85;
+  --accent-ink:#0d1210;
+  --sender:#7fc7b2;
+  --mine:#24453b;
+  --other:#222927;
+  --danger:#ff8a94;
+  --warn-bg:#2d2716;
+  --warn-line:#5a4b28;
+  --warn-ink:#e6b450;
+  --shadow:none;
 }
+@media (prefers-contrast:more){
+  :root{--muted:#4f4b44;--line:#bdb7aa}
+  html[data-theme="dark"]{--muted:#c4cdc8;--line:#56615b}
+}
+
+/* ---------- База ---------- */
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-button,input,select{font:inherit}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}
 button{cursor:pointer}
+button:disabled{opacity:.5;cursor:default}
 .hidden{display:none!important}
-.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.muted{color:var(--muted)}
+.sr-only{position:absolute;width:1px;height:1px;margin:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px}
+#text:focus-visible{outline:none}
+.error{color:var(--danger);font-size:14px}
+.btn{
+  min-height:44px;padding:0 16px;border:1px solid var(--line);border-radius:12px;
+  background:var(--surface);color:var(--ink);font-weight:600;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  text-decoration:none;white-space:nowrap;transition:background .15s,border-color .15s;
+}
+.btn:hover{border-color:var(--muted)}
+.ya-ico{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#fc3f1d;color:#fff;font-size:14px;font-weight:700;line-height:1;margin-right:4px;flex:0 0 auto}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.06)}
 
-/* Экран входа */
-.login{max-width:420px;margin:10vh auto;padding:28px;background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:0 8px 30px rgba(0,0,0,.04)}
-.brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}
-.logo{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:var(--blue);color:#fff;font-weight:800;font-size:19px}
-.login h1{font-size:23px;margin:0 0 6px}
-.muted{color:var(--muted);font-size:14px}
-.auth-stack{display:flex;flex-direction:column;gap:10px;margin-top:20px}
-.btn{min-height:44px;border:1px solid transparent;border-radius:11px;padding:9px 15px;background:var(--soft);color:var(--ink);font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:opacity .15s,background .15s}
-.btn:hover:not(:disabled){opacity:.9}
-.btn:disabled{opacity:.5;cursor:default}
-.btn.primary{background:var(--blue);color:#fff}
-.btn.yandex{background:#fc3f1d;color:#fff}
-.btn.ghost{background:transparent;border-color:var(--line)}
-.btn.sm{min-height:34px;padding:5px 11px;font-size:13px;border-radius:8px}
-.error{color:var(--danger);font-size:14px;min-height:20px;margin-top:10px}
+/* ---------- Вход ---------- */
+.login{
+  max-width:400px;margin:10vh auto 0;padding:32px 28px;
+  background:var(--surface);border:1px solid var(--line);border-radius:20px;
+  box-shadow:0 12px 40px rgba(31,36,33,.10);
+}
+.brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:18px}
+.logo{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:var(--accent-ink);font-weight:800}
+.login h1{font-size:26px;line-height:1.2;margin:26px 0 8px;letter-spacing:-.01em}
+.login p{margin:0}
+.login .btn{width:100%;margin-top:12px}
+.login .note{font-size:13px;color:var(--muted);margin-top:20px}
+.login .error{margin-top:12px}
+.login #loginError:empty{display:none}
 
-/* Основное приложение */
-#app{display:flex;flex-direction:column;height:100dvh;max-width:980px;margin:0 auto}
-.topbar{display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
-.avatar{width:36px;height:36px;border-radius:50%;object-fit:cover;background:var(--soft)}
-.top-info{flex:1;min-width:140px}
-.top-info strong{display:block;font-size:16px;line-height:1.2}
-.top-info small{color:var(--muted);font-size:12px}
-.top-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.btn.on{background:var(--blue-soft);color:var(--blue);border-color:var(--blue)}
+/* ---------- Приложение ---------- */
+.app{
+  height:100vh;height:100dvh;display:flex;flex-direction:column;
+  background:var(--chat-bg);overflow:hidden;
+}
+.header{
+  flex:none;display:flex;align-items:center;gap:12px;
+  padding:10px clamp(12px,3vw,24px);
+  background:var(--surface);border-bottom:1px solid var(--line);
+}
+.avatar{
+  width:42px;height:42px;border-radius:50%;flex:none;
+  display:grid;place-items:center;background:var(--accent);color:var(--accent-ink);
+  font-weight:700;font-size:18px;
+}
+.headcopy{flex:1;min-width:0}
+.headcopy strong{display:block;font-size:17px;line-height:1.2}
+.headcopy small{display:block;font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.head-actions{display:flex;align-items:center;gap:8px;flex:none}
+.head-actions .btn{min-height:40px;padding:0 12px;font-size:14px}
+#photo{width:34px;height:34px;border-radius:50%;object-fit:cover}
+#adminLink{font-size:14px}
 
-/* Закреплённая цель */
-.pinbar{display:none;align-items:center;gap:10px;padding:10px 16px;background:var(--blue-soft);border-bottom:1px solid var(--line);font-size:14px}
+.pinbar{
+  display:none;flex:none;gap:10px;align-items:flex-start;
+  padding:10px clamp(12px,3vw,24px);
+  background:var(--warn-bg);border-bottom:1px solid var(--warn-line);
+}
 .pinbar.visible{display:flex}
-.pinbar span{flex:1;overflow-wrap:anywhere}
+.pinmark{color:var(--warn-ink);font-size:18px;line-height:1.3}
+.pincontent{flex:1;min-width:0}
+.pinlabel{font-size:12px;font-weight:700;color:var(--warn-ink)}
+.pintext{white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px}
+.pinclose{border:0;background:transparent;color:var(--muted);font-size:22px;min-width:40px;min-height:40px;border-radius:10px}
 
-/* Панель фильтров и статистики */
-.controls{padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--line);background:var(--bg)}
-.tabs{display:flex;gap:6px;flex-wrap:wrap;flex:1}
-.tab{min-height:36px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--muted);font-size:13px;font-weight:600}
-.tab.active{background:var(--blue);color:#fff;border-color:var(--blue)}
-.search{min-height:36px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:14px;min-width:200px}
+.feed{
+  flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;
+  padding:18px clamp(12px,3vw,40px);
+}
+.day{
+  text-align:center;margin:0 auto 16px;width:max-content;
+  padding:4px 12px;border-radius:999px;
+  background:var(--surface);color:var(--muted);font-size:12px;box-shadow:var(--shadow);
+}
+#messages{display:flex;flex-direction:column;gap:6px}
+.empty{text-align:center;color:var(--muted);padding:24px 0}
 
-/* Лента задач */
-.feed{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
-.empty{text-align:center;color:var(--muted);padding:48px 16px;font-size:15px}
+/* ---------- Сообщения ---------- */
+.msg{
+  position:relative;width:max-content;max-width:min(76%,clamp(260px,42vw,900px));
+  padding:8px 12px 6px;border-radius:16px;
+  background:var(--other);box-shadow:var(--shadow);
+  overflow-wrap:anywhere;touch-action:pan-y;
+  user-select:text;-webkit-user-select:text;
+  animation:msg-in .24s cubic-bezier(.2,.8,.2,1) both;
+}
+.msg.other{align-self:flex-start;border-bottom-left-radius:4px}
+.msg.mine{align-self:flex-end;background:var(--mine);border-bottom-right-radius:4px;transform-origin:bottom right}
+.sender{font-size:clamp(12px,.35vw + 8px,16px);font-weight:700;color:var(--sender);margin-bottom:2px}
+.body{white-space:pre-wrap;font-size:clamp(15px,.55vw + 9px,21px)}
+.time{display:block;text-align:right;font-size:clamp(11px,.3vw + 7px,14px);color:var(--muted);margin-top:2px}
 
-/* Карточка задачи */
-.task{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px 15px;display:flex;align-items:flex-start;gap:12px;transition:transform .2s,opacity .3s}
-.task.done{opacity:.68}
-.task.done .task-title{text-decoration:line-through;color:var(--muted)}
-.task.task-removing{opacity:0;transform:scale(.95)}
-.chk{width:22px;height:22px;margin-top:2px;accent-color:var(--blue);cursor:pointer;flex:none}
-.task-main{flex:1;min-width:0}
-.task-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
-.task-title{font-size:15px;font-weight:500;overflow-wrap:anywhere;word-break:break-word}
-.badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.02em}
-.prio-high{background:rgba(196,61,75,.15);color:var(--danger)}
-.prio-medium{background:rgba(183,121,31,.16);color:var(--warn)}
-.prio-low{background:rgba(26,127,75,.15);color:var(--ok)}
-.status-select{font-size:12px;padding:2px 8px;border-radius:8px;border:1px solid var(--line);background:var(--soft);color:var(--ink)}
-.task-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:6px}
-.deadline.overdue{color:var(--danger);font-weight:600}
+/* Карточка файла */
+.file{
+  display:flex;align-items:center;gap:12px;
+  width:100%;min-width:230px;margin:2px 0 4px;padding:10px 12px;
+  border:1px solid var(--line);border-radius:12px;
+  background:var(--surface);text-align:left;
+}
+.file:hover{border-color:var(--accent)}
+.file:disabled{opacity:.6}
+.fi{
+  width:40px;height:40px;flex:none;border-radius:10px;
+  display:grid;place-items:center;font-size:20px;
+  background:var(--accent);color:var(--accent-ink);
+}
+.fmeta{min-width:0;flex:1}
+.fmeta strong{display:block;font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fmeta small{display:block;font-size:12px;color:var(--muted)}
 
-/* Вложение в задаче */
-.file{margin-top:8px;display:inline-flex;align-items:center;gap:9px;padding:7px 11px;border-radius:10px;border:1px solid var(--line);background:var(--soft);color:var(--ink);text-align:left}
-.file strong{display:block;font-size:13px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.file small{color:var(--muted);font-size:11px}
+.msg-menu{
+  position:fixed;z-index:30;min-width:200px;padding:6px;
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  box-shadow:0 10px 30px rgba(0,0,0,.18);
+  animation:menu-in .16s ease-out both;transform-origin:top left;
+}
+.msg-menu button{
+  display:block;width:100%;min-height:44px;text-align:left;
+  border:0;border-radius:10px;background:transparent;padding:0 12px;color:var(--ink);
+}
+.msg-menu button:hover{background:var(--chat-bg)}
 
-/* Форма создания задачи */
-.composer{background:var(--card);border-top:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-bottom))}
-.filechip{display:flex;align-items:center;gap:8px;padding:6px 10px;margin-bottom:8px;background:var(--soft);border-radius:9px;font-size:13px}
-.filechip span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.form-row{display:flex;gap:8px;flex-wrap:wrap}
-.form-row input[type="text"]{flex:1;min-width:200px;min-height:44px;padding:10px 14px;border-radius:11px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
-.form-row select,.form-row input[type="date"]{min-height:44px;padding:8px 10px;border-radius:11px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:14px}
-.chat-err{color:var(--danger);font-size:13px;margin-top:6px;min-height:18px}
+.foot{flex:none;text-align:center;font-size:12px;color:var(--muted);padding:4px 12px 6px}
+#chatError{flex:none;padding:0 16px}
+#chatError:not(:empty){padding:8px 16px 0;color:var(--danger);font-size:14px}
 
-/* Контекстное меню и модалка настроек */
-.menu{position:fixed;z-index:50;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:5px;box-shadow:0 10px 28px rgba(0,0,0,.18);display:flex;flex-direction:column;min-width:190px}
-.menu button{background:transparent;border:0;color:var(--ink);padding:9px 12px;text-align:left;border-radius:8px;font-size:14px}
-.menu button:hover{background:var(--soft)}
-.modal{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.45);display:grid;place-items:center;padding:16px}
-.modal-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;width:100%;max-width:380px}
-.modal-card h2{margin:0 0 14px;font-size:18px}
-.setting-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
-.setting-row select{min-height:38px;padding:6px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+/* ---------- Поле ввода ---------- */
+.compose{
+  flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:8px;
+  padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+  background:var(--surface);border-top:1px solid var(--line);
+}
+.filechip{
+  flex:1 0 100%;display:flex;align-items:center;gap:10px;
+  padding:8px 8px 8px 10px;border-radius:12px;
+  background:var(--bg);border:1px solid var(--line);
+}
+.filechip .fi{width:36px;height:36px;font-size:17px}
+.filechip.sending{opacity:.75}
+.fc-x{
+  width:40px;height:40px;flex:none;border:0;border-radius:10px;
+  background:transparent;color:var(--muted);font-size:24px;line-height:1;
+}
+.fc-x:hover{background:var(--line);color:var(--ink)}
+.attach{width:44px;height:44px;padding:0;flex:none;font-size:20px}
+.attach.on{border-color:var(--accent);color:var(--accent);background:var(--bg)}
+#text{
+  flex:1;min-width:0;min-height:44px;padding:0 16px;
+  border:1px solid var(--line);border-radius:22px;
+  background:var(--bg);font-size:16px;
+}
+#text::placeholder{color:var(--muted)}
+#text:focus{outline:none;border-color:var(--accent)}
+.send{width:44px;height:44px;padding:0;flex:none;border-radius:50%;font-size:18px}
+.send.busy{opacity:.6}
 
-@media(max-width:600px){
-  .topbar{padding:10px 12px}
-  .controls{padding:10px 12px}
-  .search{width:100%}
-  .form-row select,.form-row input[type="date"]{flex:1}
+/* ---------- Настройки ---------- */
+.settings-panel{
+  position:fixed;inset:0;z-index:20;padding:16px;
+  display:grid;place-items:center;background:rgba(20,24,22,.45);
+  animation:overlay-in .18s ease-out both;
+}
+.settings-closing{animation:overlay-out .18s ease-in both}
+.settings-card{
+  width:min(460px,100%);padding:22px;border-radius:20px;
+  background:var(--surface);box-shadow:0 18px 60px rgba(0,0,0,.25);
+  animation:settings-in .22s cubic-bezier(.2,.8,.2,1) both;
+}
+.settings-closing .settings-card{animation:settings-out .16s ease-in both}
+.settings-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
+.settings-top h2{font-size:21px;margin:0}
+.setting-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 0;border-top:1px solid var(--line)}
+.setting-row strong,.setting-row small{display:block}
+.setting-row small{font-size:13px;color:var(--muted);margin-top:2px}
+.setting-select{
+  min-height:44px;max-width:200px;padding:8px 10px;
+  border:1px solid var(--line);border-radius:10px;background:var(--bg);
+}
+
+/* ---------- Адаптив ---------- */
+@media (max-width:600px){
+  .login{margin:8vh 14px 0;padding:24px 22px}
+  .header{gap:10px;padding:8px 12px}
+  .avatar{width:38px;height:38px;font-size:16px}
+  .headcopy strong{font-size:16px}
+  .feed{padding:14px 10px}
+  .msg{max-width:86%}
+  .file{min-width:0;width:100%}
+  .compose{padding:9px 10px calc(9px + env(safe-area-inset-bottom));gap:6px}
+  #text{font-size:16px;min-height:46px}
+  .send{width:46px;height:46px}
+  .setting-row{flex-direction:column;align-items:flex-start}
+  .setting-select{max-width:none;width:100%}
+  .settings-card{padding:18px}
+}
+@media (max-width:520px){
+  .head-actions{gap:6px}
+  .head-actions .btn{padding:0;width:40px;min-width:40px}
+  .head-actions .lbl{display:none}
+  #adminLink{width:auto;padding:0 10px;font-size:13px}
+}
+
+/* ---------- Тёмная тема: подложка для карточек ---------- */
+html[data-theme="dark"] .login{box-shadow:none}
+
+/* ---------- Анимации ---------- */
+@keyframes msg-in{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes menu-in{from{opacity:0;transform:translateY(6px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes overlay-in{from{opacity:0}to{opacity:1}}
+@keyframes overlay-out{to{opacity:0}}
+@keyframes settings-in{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes settings-out{to{opacity:0;transform:translateY(8px) scale(.98)}}
+.msg-removing{animation:msg-break .48s ease-in forwards!important;pointer-events:none}
+@keyframes msg-break{to{opacity:0;filter:blur(2px);transform:scale(.86) rotate(-3deg)}}
+.msg-piece{position:fixed;z-index:100;width:7px;height:7px;border-radius:2px;background:var(--accent);pointer-events:none;animation:piece-fly .68s cubic-bezier(.2,.7,.4,1) forwards}
+@keyframes piece-fly{0%{opacity:1;transform:translate(0,0) rotate(0) scale(1)}100%{opacity:0;transform:translate(var(--dx),var(--dy)) rotate(var(--rot)) scale(.25)}}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important}
 }
 </style>
 </head>
 <body>
+<main id="login" class="login">
+  <div class="brand"><span class="logo" aria-hidden="true">Ч</span>Мой чат</div>
+  <h1>Войти в чат</h1>
+  <p class="muted">Войдите через Google или Яндекс, чтобы читать и отправлять сообщения.</p>
+  <button id="loginBtn" class="btn primary" type="button">Продолжить с Google</button>
+  <button id="gisBtn" class="btn primary" type="button">Продолжить с Google</button>
+  <button id="yandexBtn" class="btn" type="button"><span class="ya-ico" aria-hidden="true">Я</span>Войти через Яндекс</button>
+  <div id="loginError" class="error" role="alert"></div>
+  <p class="note">Доступ есть только у адресов, добавленных в правила базы.</p>
+</main>
 
-<section id="login" class="login">
-  <div class="brand">
-    <span class="logo" aria-hidden="true">✓</span>
-    <div>
-      <h1>Менеджер задач</h1>
-      <div class="muted">Закрытое рабочее пространство</div>
+<div id="app" class="app hidden">
+  <header class="header">
+    <div class="avatar" aria-hidden="true">Ч</div>
+    <div class="headcopy">
+      <strong>Общий чат</strong>
+      <small id="status" role="status" aria-live="polite">Подключение…</small>
     </div>
-  </div>
-  <p class="muted">Доступ открыт только участникам из разрешённого списка.</p>
-  <div class="auth-stack">
-    <button id="loginBtn" class="btn primary" type="button">Продолжить с Google</button>
-    <button id="gisBtn" class="btn primary" type="button">Войти через Google</button>
-    <button id="yandexBtn" class="btn yandex" type="button">Войти через Яндекс ID</button>
-  </div>
-  <div id="loginError" class="error" role="status" aria-live="polite"></div>
-</section>
-
-<main id="app" class="hidden">
-  <header class="topbar">
-    <img id="photo" class="avatar hidden" alt="">
-    <div class="top-info">
-      <strong>Менеджер задач <span id="counter" class="muted" style="font-weight:400"></span></strong>
-      <small id="status">Подключение…</small>
-    </div>
-    <div class="top-actions">
-      <button id="pushBtn" class="btn sm ghost hidden" type="button"><span class="lbl">Уведомления</span></button>
-      <a id="adminLink" class="btn sm ghost hidden" href="./admin/" style="text-decoration:none">Админка</a>
-      <button id="settingsBtn" class="btn sm ghost" type="button" title="Настройки">⚙️</button>
-      <button id="logout" class="btn sm ghost" type="button">Выйти</button>
+    <div class="head-actions">
+      <img id="photo" class="hidden" alt="">
+      <a id="adminLink" class="btn hidden" href="admin/">Админ-панель</a>
+      <button id="pushBtn" class="btn hidden" type="button" aria-label="Уведомления о новых сообщениях"><span aria-hidden="true">🔔</span><span class="lbl">Уведомления</span></button>
+      <button id="settingsBtn" class="btn" type="button" aria-haspopup="dialog" aria-label="Настройки"><span aria-hidden="true">⚙</span><span class="lbl">Настройки</span></button>
+      <button id="logout" class="btn" type="button" aria-label="Выйти"><span aria-hidden="true">⎋</span><span class="lbl">Выйти</span></button>
     </div>
   </header>
 
   <div id="pinbar" class="pinbar">
-    <span>📌 <strong>Главная цель:</strong> <span id="pintext"></span></span>
-    <button id="unpin" class="btn sm ghost hidden" type="button">Открепить</button>
-  </div>
-
-  <div class="controls">
-    <div class="tabs" id="filterTabs">
-      <button class="tab active" data-filter="all" type="button">Все</button>
-      <button class="tab" data-filter="active" type="button">Активные</button>
-      <button class="tab" data-filter="doing" type="button">В работе</button>
-      <button class="tab" data-filter="done" type="button">Выполненные</button>
-      <button class="tab" data-filter="mine" type="button">Мои</button>
+    <span class="pinmark" aria-hidden="true">⌖</span>
+    <div class="pincontent">
+      <div class="pinlabel">Закреплённое сообщение</div>
+      <div id="pintext" class="pintext"></div>
     </div>
-    <input id="searchInput" class="search" type="search" placeholder="Поиск по задачам…">
+    <button id="unpin" class="pinclose hidden" type="button" aria-label="Открепить">×</button>
   </div>
 
-  <section id="feed" class="feed" aria-label="Список задач">
-    <div id="empty" class="empty">Задач пока нет. Добавьте первую задачу ниже.</div>
-    <div id="tasks" style="display:flex;flex-direction:column;gap:10px"></div>
-  </section>
+  <main id="feed" class="feed">
+    <div class="day">Сообщения чата</div>
+    <div id="messages" role="log" aria-live="polite" aria-relevant="additions" aria-label="Сообщения чата"></div>
+    <div id="empty" class="empty hidden">Пока нет сообщений. Напишите первым.</div>
+  </main>
 
-  <form id="form" class="composer">
+  <div class="foot">Сообщения видны всем участникам этого чата</div>
+  <div id="chatError" role="status" aria-live="polite"></div>
+
+  <form id="form" class="compose">
     <div id="filechip" class="filechip hidden">
-      <span>📎 <strong id="fcName"></strong> (<small id="fcSize"></small>)</span>
-      <button id="fcRemove" class="btn sm ghost" type="button">Убрать</button>
+      <span class="fi" aria-hidden="true">📄</span>
+      <div class="fmeta"><strong id="fcName"></strong><small id="fcSize"></small></div>
+      <button id="fcRemove" class="fc-x" type="button" aria-label="Убрать файл">×</button>
     </div>
-    <div class="form-row">
-      <input id="file" type="file" class="hidden">
-      <button id="attachBtn" class="btn ghost" type="button" title="Прикрепить файл (до 20 МБ)">📎</button>
-      <input id="text" type="text" maxlength="2000" placeholder="Новая задача…" autocomplete="off">
-      <select id="priority" aria-label="Приоритет">
-        <option value="low">Низкий</option>
-        <option value="medium" selected>Средний</option>
-        <option value="high">Высокий</option>
-      </select>
-      <input id="deadline" type="date" aria-label="Дедлайн" title="Срок выполнения">
-      <button id="send" class="btn primary" type="submit" disabled>Добавить</button>
-    </div>
-    <div id="chatError" class="chat-err" role="status" aria-live="polite"></div>
+    <input id="file" type="file" hidden>
+    <button class="btn attach" type="button" id="attachBtn" aria-label="Прикрепить файл" title="Прикрепить файл">📎</button>
+    <label class="sr-only" for="text">Текст сообщения</label>
+    <input id="text" maxlength="2000" autocomplete="off" placeholder="Сообщение…" aria-describedby="chatError" enterkeyhint="send">
+    <button id="send" class="btn primary send" type="submit" aria-label="Отправить" disabled>➤</button>
   </form>
-</main>
+</div>
 
-<div id="taskMenu" class="menu hidden" role="menu"></div>
-
-<div id="settingsPanel" class="modal hidden">
-  <div class="modal-card">
-    <h2>Настройки</h2>
-    <div class="setting-row">
-      <label for="themeMode">Тема оформления</label>
-      <select id="themeMode">
+<div id="settingsPanel" class="settings-panel hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="settings-card">
+    <div class="settings-top">
+      <h2 id="settingsTitle">Настройки</h2>
+      <button id="settingsClose" class="btn" type="button" aria-label="Закрыть настройки">Закрыть</button>
+    </div>
+    <label class="setting-row" for="clockMode">
+      <span><strong>Формат времени</strong><small>Как показывать время отправки сообщений</small></span>
+      <select id="clockMode" class="setting-select">
+        <option value="auto">Авто</option>
+        <option value="12">12 часов (AM/PM)</option>
+        <option value="24">24 часа</option>
+      </select>
+    </label>
+    <label class="setting-row" for="themeMode">
+      <span><strong>Тема</strong><small>Светлая или тёмная</small></span>
+      <select id="themeMode" class="setting-select">
         <option value="light">Светлая</option>
         <option value="dark">Тёмная</option>
       </select>
-    </div>
-    <div class="setting-row" style="border-bottom:0">
-      <label for="clockMode">Формат времени</label>
-      <select id="clockMode">
-        <option value="auto">Авто</option>
-        <option value="24">24 часа</option>
-        <option value="12">12 часов</option>
-      </select>
-    </div>
-    <div style="margin-top:16px;text-align:right">
-      <button id="settingsClose" class="btn primary" type="button">Готово</button>
-    </div>
+    </label>
   </div>
 </div>
-
-<script type="module" src="./app.js"></script>
+<div id="messageMenu" class="msg-menu hidden"></div>
+<script type="module" src="app.js"></script>
 </body>
 </html>

@@ -665,7 +665,9 @@ pushBtn.onclick = async () => {
   try {
     const perm = await Notification.requestPermission();
     if (perm !== 'granted') throw new Error('уведомления запрещены в настройках браузера.');
-    const reg = await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.register('sw.js');
+    // Подписка возможна только у активного воркера: ждём, пока он станет активным.
+    const reg = await navigator.serviceWorker.ready;
     const want = vapidBytes(VAPID_KEY);
     let sub = await reg.pushManager.getSubscription();
     // Если подписка сделана с другим ключом, её нужно пересоздать.
